@@ -26,7 +26,7 @@ from sklearn.metrics import (
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import LABELS, PROCESSED_DIR, RESULTS_DIR  # noqa: E402
+from src.config import CHECKPOINT_DIR, LABELS, PROCESSED_DIR, RESULTS_DIR  # noqa: E402
 from src.dataset import EmotionAudioDataset, make_dataloader  # noqa: E402
 from src.model import build_model  # noqa: E402
 
@@ -115,13 +115,27 @@ def main() -> None:
         )
     manifest = pd.read_csv(manifest_path)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "mps" if torch.backends.mps.is_available()
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     print(f"device: {device}")
     model, fe = build_model(num_labels=len(LABELS))
+
+    checkpoint_path = CHECKPOINT_DIR / "best.pt"
+    model_state = "untrained_classifier_head"
+    if checkpoint_path.exists():
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(ckpt["state_dict"])
+        model_state = (
+            "trained_full_finetune" if ckpt.get("unfreeze_encoder")
+            else "trained_head_only"
+        )
+        print(f"loaded {checkpoint_path}  ({model_state}, val_acc={ckpt.get('val_accuracy', 'n/a')})")
     model.to(device)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    metrics: dict = {"model_state": "untrained_classifier_head", "splits": {}}
+    metrics: dict = {"model_state": model_state, "splits": {}}
 
     rav_test = evaluate_split(model, fe, manifest, "test", device)
     if rav_test is not None:
@@ -130,7 +144,7 @@ def main() -> None:
             rav_test["predictions"],
             LABELS,
             RESULTS_DIR / "ravdess_confusion.png",
-            "RAVDESS test — untrained head",
+            f"RAVDESS test — {model_state}",
         )
         metrics["splits"]["ravdess_test"] = {k: v for k, v in rav_test.items() if k not in {"predictions", "labels"}}
         print("\n[RAVDESS test]")
@@ -143,7 +157,7 @@ def main() -> None:
             crema["predictions"],
             LABELS,
             RESULTS_DIR / "crema_d_confusion.png",
-            "CREMA-D OOD — untrained head",
+            f"CREMA-D OOD — {model_state}",
         )
         metrics["splits"]["crema_d_ood"] = {k: v for k, v in crema.items() if k not in {"predictions", "labels"}}
         print("\n[CREMA-D OOD]")
