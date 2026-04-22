@@ -1,0 +1,41 @@
+{
+  "model_state": "untrained_classifier_head",
+  "splits": {
+    "ravdess_test": {
+      "split": "test",
+      "n": 144,
+      "accuracy": 0.2986111111111111,
+      "macro_f1": 0.19388548653640517,
+      "per_class_precision": {
+        "neutral": 0.0,
+        "happy": 0.0,
+        "sad": 0.22448979591836735,
+        "angry": 0.3368421052631579
+      },
+      "per_class_recall": {
+        "neutral": 0.0,
+        "happy": 0.0,
+        "sad": 0.34375,
+        "angry": 1.0
+      }
+    },
+    "crema_d_ood": {
+      "split": "ood",
+      "n": 4900,
+      "accuracy": 0.26285714285714284,
+      "macro_f1": 0.11031038116963549,
+      "per_class_precision": {
+        "neutral": 0.0,
+        "happy": 0.0,
+        "sad": 0.8947368421052632,
+        "angry": 0.26173805601317957
+      },
+      "per_class_recall": {
+        "neutral": 0.0,
+        "happy": 0.0,
+        "sad": 0.013375295043273014,
+        "angry": 1.0
+      }
+    }
+  }
+}

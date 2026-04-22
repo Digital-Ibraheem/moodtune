@@ -6,7 +6,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+import soundfile as sf
 import torch
 import torchaudio
 from torch.utils.data import DataLoader, Dataset
@@ -34,9 +36,10 @@ class EmotionAudioDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         row = self.df.iloc[idx]
-        wav, sr = torchaudio.load(row["filepath"])
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
+        data, sr = sf.read(row["filepath"], dtype="float32", always_2d=False)
+        if data.ndim == 2:
+            data = data.mean(axis=1)
+        wav = torch.from_numpy(np.ascontiguousarray(data)).unsqueeze(0)
         wav = self._resample(wav, sr).squeeze(0)
 
         if wav.shape[0] < MAX_SAMPLES:
