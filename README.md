@@ -1,6 +1,7 @@
 # MoodTune — Speech Emotion Recognition with honest cross-corpus evaluation
 
-<img width="1600" height="1514" alt="screen" src="https://github.com/user-attachments/assets/8c822a53-f401-45a7-8d72-f3885d8934ac" />
+<img width="1495" height="830" alt="image" src="https://github.com/user-attachments/assets/d51cb70b-27e4-4980-8c6a-875179c6af7c" />
+<img width="1482" height="816" alt="image" src="https://github.com/user-attachments/assets/dce4a3ae-4203-4838-877a-4a72524c926f" />
 
 
 
