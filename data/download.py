@@ -15,11 +15,12 @@ downloads files; redistribution rules still apply to derivative work.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
-import tarfile
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,9 +29,13 @@ from src.config import RAW_DIR  # noqa: E402
 RAVDESS_URL = (
     "https://zenodo.org/record/1188976/files/Audio_Speech_Actors_01-24.zip"
 )
-# Single tarball of the full CREMA-D repo — faster than per-file pulls.
-CREMA_TARBALL_URL = (
-    "https://codeload.github.com/CheyneyComputerScience/CREMA-D/tar.gz/refs/heads/master"
+# CREMA-D stores WAVs via Git LFS. The raw.githubusercontent endpoint transparently
+# resolves the LFS pointers, so we pull files individually in parallel.
+CREMA_LISTING_API = (
+    "https://api.github.com/repos/CheyneyComputerScience/CREMA-D/contents/AudioWAV"
+)
+CREMA_RAW_BASE = (
+    "https://raw.githubusercontent.com/CheyneyComputerScience/CREMA-D/master/AudioWAV"
 )
 
 
@@ -59,48 +64,70 @@ def download_ravdess(target_dir: Path) -> None:
     print(f"[ravdess] done: {len(list(target_dir.rglob('*.wav')))} wavs")
 
 
-def download_crema_d(target_dir: Path, sample_only: bool = False) -> None:
-    """Pull CREMA-D via a single tarball and extract only AudioWAV/.
+def _list_crema_files(limit: int | None = None) -> list[str]:
+    names: list[str] = []
+    page = 1
+    while True:
+        url = f"{CREMA_LISTING_API}?per_page=100&page={page}"
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req) as resp:
+            batch = json.loads(resp.read())
+        if not batch:
+            break
+        for entry in batch:
+            name = entry.get("name", "")
+            if name.endswith(".wav"):
+                names.append(name)
+        if limit is not None and len(names) >= limit:
+            break
+        page += 1
+    if limit is not None:
+        names = names[:limit]
+    return names
 
-    sample_only keeps only the first 500 wavs after extraction — handy for
-    iterating locally without shipping 500MB of audio through the pipeline.
-    """
+
+def _fetch_one(name: str, audio_dir: Path) -> tuple[str, bool, str]:
+    dest = audio_dir / name
+    if dest.exists() and dest.stat().st_size > 1024:
+        return name, True, "cached"
+    url = f"{CREMA_RAW_BASE}/{name}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, open(dest, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        return name, True, "ok"
+    except Exception as exc:  # noqa: BLE001
+        return name, False, str(exc)
+
+
+def download_crema_d(target_dir: Path, sample_only: bool = False, workers: int = 24) -> None:
+    """Parallel per-file pull from raw.githubusercontent (LFS-resolved)."""
     audio_dir = target_dir / "AudioWAV"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = list(audio_dir.glob("*.wav"))
-    min_expected = 200 if sample_only else 7000
+    existing = [p for p in audio_dir.glob("*.wav") if p.stat().st_size > 1024]
+    min_expected = 500 if sample_only else 7000
     if len(existing) >= min_expected:
         print(f"[crema] already present ({len(existing)} wavs), skipping")
         return
 
-    tar_path = target_dir / "crema_d.tar.gz"
-    if not tar_path.exists():
-        _download(CREMA_TARBALL_URL, tar_path)
+    limit = 500 if sample_only else None
+    print(f"[crema] listing files (sample_only={sample_only})")
+    names = _list_crema_files(limit=limit)
+    print(f"[crema] fetching {len(names)} wavs with {workers} workers")
 
-    print(f"[crema] extracting AudioWAV/ from {tar_path}")
-    count = 0
-    with tarfile.open(tar_path, "r:gz") as tf:
-        for member in tf:
-            if not member.isfile():
-                continue
-            parts = Path(member.name).parts
-            if len(parts) < 3 or parts[1] != "AudioWAV" or not parts[-1].endswith(".wav"):
-                continue
-            dest = audio_dir / parts[-1]
-            if dest.exists() and dest.stat().st_size > 0:
-                count += 1
-                continue
-            extracted = tf.extractfile(member)
-            if extracted is None:
-                continue
-            with open(dest, "wb") as out:
-                shutil.copyfileobj(extracted, out)
-            count += 1
-            if sample_only and count >= 500:
-                break
-    tar_path.unlink()
-    print(f"[crema] done: {len(list(audio_dir.glob('*.wav')))} wavs")
+    done = 0
+    failed = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_fetch_one, n, audio_dir) for n in names]
+        for fut in as_completed(futures):
+            _, ok, _ = fut.result()
+            done += 1
+            if not ok:
+                failed += 1
+            if done % 200 == 0:
+                print(f"[crema] {done}/{len(names)} ({failed} failed)")
+    ok_wavs = [p for p in audio_dir.glob("*.wav") if p.stat().st_size > 1024]
+    print(f"[crema] done: {len(ok_wavs)} wavs ({failed} failed)")
 
 
 def main() -> None:
