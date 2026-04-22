@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import urllib.request
@@ -30,12 +31,15 @@ RAVDESS_URL = (
     "https://zenodo.org/record/1188976/files/Audio_Speech_Actors_01-24.zip"
 )
 # CREMA-D stores WAVs via Git LFS. The raw.githubusercontent endpoint transparently
-# resolves the LFS pointers, so we pull files individually in parallel.
-CREMA_LISTING_API = (
-    "https://api.github.com/repos/CheyneyComputerScience/CREMA-D/contents/AudioWAV"
+# resolves the LFS pointers, so we pull files individually in parallel. The Git Tree
+# API returns every path in one response, which avoids paginated rate-limit issues.
+CREMA_TREE_API = (
+    "https://api.github.com/repos/CheyneyComputerScience/CREMA-D/git/trees/master?recursive=1"
 )
+# Must use github.com/.../raw/ — that endpoint resolves Git LFS pointers server-side.
+# raw.githubusercontent.com serves the pointer file verbatim instead.
 CREMA_RAW_BASE = (
-    "https://raw.githubusercontent.com/CheyneyComputerScience/CREMA-D/master/AudioWAV"
+    "https://github.com/CheyneyComputerScience/CREMA-D/raw/master/AudioWAV"
 )
 
 
@@ -65,25 +69,21 @@ def download_ravdess(target_dir: Path) -> None:
 
 
 def _list_crema_files(limit: int | None = None) -> list[str]:
-    names: list[str] = []
-    page = 1
-    while True:
-        url = f"{CREMA_LISTING_API}?per_page=100&page={page}"
-        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req) as resp:
-            batch = json.loads(resp.read())
-        if not batch:
-            break
-        for entry in batch:
-            name = entry.get("name", "")
-            if name.endswith(".wav"):
-                names.append(name)
-        if limit is not None and len(names) >= limit:
-            break
-        page += 1
-    if limit is not None:
-        names = names[:limit]
-    return names
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(CREMA_TREE_API, headers=headers)
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        payload = json.loads(resp.read())
+    if payload.get("truncated"):
+        print("[crema] WARN: git tree response was truncated")
+    names = [
+        Path(t["path"]).name
+        for t in payload.get("tree", [])
+        if t.get("path", "").startswith("AudioWAV/") and t["path"].endswith(".wav")
+    ]
+    return names[:limit] if limit is not None else names
 
 
 def _fetch_one(name: str, audio_dir: Path) -> tuple[str, bool, str]:
