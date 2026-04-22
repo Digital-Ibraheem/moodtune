@@ -26,29 +26,40 @@ Self-supervised pretraining on LibriSpeech gives a strong audio representation f
 
 ## Current results
 
-10 epochs, head-only fine-tune (encoder frozen), ~4.5 min on Apple Silicon MPS. Trained weights live at `checkpoints/best.pt`; raw numbers in [`results/metrics.json`](results/metrics.json):
+Two training regimes, 10 epochs each on Apple Silicon MPS. Raw numbers in [`results/metrics.json`](results/metrics.json):
 
-| Split              | Before (random head) | After (10 ep, frozen enc.) | n    |
-|--------------------|----------------------|----------------------------|------|
-| RAVDESS test       | 29.9% / F1 0.19      | **74.3% / F1 0.71**        |  144 |
-| CREMA-D (OOD)      | 26.3% / F1 0.11      | 32.1% / F1 0.23            | 4900 |
+| Model                          | RAVDESS test (in-corpus) | CREMA-D (OOD)   | Cross-corpus gap | Train time |
+|--------------------------------|--------------------------|-----------------|------------------|------------|
+| Random head (baseline)         | 29.9% / F1 0.19          | 26.3% / F1 0.11 | —                | —          |
+| **Head-only fine-tune**        | **74.3% / F1 0.71**      | 32.1% / F1 0.23 | **42 pts**       | ~5 min     |
+| **Full fine-tune (encoder unfrozen)** | 70.8% / F1 0.70   | **51.7% / F1 0.48** | **19 pts**   | ~10 min    |
 
-The **42-point drop** from RAVDESS to CREMA-D is the whole point of the exercise. A model that looks solid on its training corpus — 74% on held-out RAVDESS actors, which is already harder than the 85%+ numbers most public notebooks report on random splits — falls apart on a different corpus with different actors, sentences, and recording conditions. CREMA-D accuracy is only ~7 points above the 25% chance floor. The trained head found something RAVDESS-specific (mic, sentence structure, intensity distribution) rather than a corpus-invariant representation of emotion.
+**The interesting result is the trade-off.** Head-only fine-tune is slightly better on RAVDESS itself (the projector + classifier squeeze the most out of RAVDESS-specific embedding directions) but collapses on CREMA-D. Full fine-tuning gives up a few points on RAVDESS but nearly **doubles** cross-corpus accuracy — unfreezing the transformer blocks lets the model re-learn audio representations that are less tied to RAVDESS's recording conditions, 2 stock sentences, and theatrical intensity distribution.
 
-This is the number recruiters should see on a resume. Not "I got 90% on RAVDESS" — *everyone* got 90% on RAVDESS. The value is reporting the drop honestly and having the pipeline to measure it.
+A 19-point cross-corpus gap is still large. That's honest: closing it further needs real domain-adaptation techniques (augmentation, adversarial objectives, or training on a mix of corpora) — see the roadmap.
+
+Most public RAVDESS notebooks post 85–95% accuracy on a random train/test split. Our 74% / 71% numbers come from a **speaker-stratified** split: no actor appears in both train and test. Those published numbers are inflated by speaker leakage.
 
 ![RAVDESS confusion](results/ravdess_confusion.png)
 ![CREMA-D confusion](results/crema_d_confusion.png)
 
-Regenerate anytime with `python -m src.train && python -m src.evaluate`.
+Reproduce with:
+
+```bash
+python -m src.train --epochs 10                    # head-only
+python -m src.train --epochs 10 --lr 3e-5 --unfreeze-encoder  # full fine-tune
+python -m src.evaluate                             # uses checkpoints/best.pt
+```
 
 ## Roadmap
 
-- [x] Fine-tune classifier head on the RAVDESS train split (frozen encoder)
-- [x] Report the cross-corpus accuracy drop with a trained model
-- [ ] Full fine-tune (unfreeze transformer) — expected to push RAVDESS into the 80s
+- [x] Fine-tune classifier head on RAVDESS (frozen encoder)
+- [x] Full fine-tune (unfreeze transformer)
+- [x] Report the cross-corpus accuracy drop for both regimes
+- [ ] Regularize the full fine-tune — label smoothing, dropout on the head, earlier stopping; val loss diverged by epoch 4
 - [ ] Add SpecAugment and waveform-level augmentation (noise, pitch, time-stretch)
-- [ ] Domain-adversarial training to close the RAVDESS → CREMA-D gap
+- [ ] Domain-adversarial training to close the remaining 19-point RAVDESS → CREMA-D gap
+- [ ] Co-training on CREMA-D + RAVDESS and measuring transfer to IEMOCAP
 - [ ] Extend to multilingual SER via XLSR-53
 - [ ] Add a calibration plot — SER models are usually overconfident OOD
 
