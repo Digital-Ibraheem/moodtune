@@ -1,9 +1,5 @@
 # MoodTune — Speech Emotion Recognition with honest cross-corpus evaluation
 
-> 🚧 **Work in progress.** Pipeline, evaluation methodology, and demo are complete. The classifier head is currently **untrained** — numbers below are a zero-shot baseline. Full fine-tuning is pending on a GPU machine.
-
-![demo](docs/demo.png)
-<!-- TODO: replace with a real screenshot of the Gradio app -->
 
 ## What this project is
 
