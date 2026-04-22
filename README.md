@@ -24,28 +24,31 @@ RAVDESS ships with 8 emotions. Inter-rater agreement on "fearful" vs. "surprised
 ### Why Wav2Vec2
 Self-supervised pretraining on LibriSpeech gives a strong audio representation for free. Fine-tuning a small classification head on a frozen encoder is the standard 2024 recipe and needs orders of magnitude less data than training from scratch. MoodTune uses `facebook/wav2vec2-base` with the feature encoder frozen; only the projection + classification layers are trainable.
 
-## Current results (untrained classifier head — baseline only)
+## Current results
 
-Zero-shot numbers from `python -m src.evaluate` with a randomly-initialized classifier head on top of a frozen pretrained Wav2Vec2 encoder. A 4-class uniform baseline is 25%, so the model is effectively predicting one or two classes at random:
+10 epochs, head-only fine-tune (encoder frozen), ~4.5 min on Apple Silicon MPS. Trained weights live at `checkpoints/best.pt`; raw numbers in [`results/metrics.json`](results/metrics.json):
 
-| Split              | Accuracy | Macro-F1 | n    | Notes                              |
-|--------------------|----------|----------|------|------------------------------------|
-| RAVDESS test       | 29.9%    | 0.194    |  144 | 4 held-out speakers                 |
-| CREMA-D (OOD)      | 26.3%    | 0.110    | 4900 | entire corpus, out-of-distribution  |
+| Split              | Before (random head) | After (10 ep, frozen enc.) | n    |
+|--------------------|----------------------|----------------------------|------|
+| RAVDESS test       | 29.9% / F1 0.19      | **74.3% / F1 0.71**        |  144 |
+| CREMA-D (OOD)      | 26.3% / F1 0.11      | 32.1% / F1 0.23            | 4900 |
 
-Per-class recall (same run) shows the collapse: the random head puts almost every clip into `angry`, never predicts `neutral` or `happy`, and only occasionally predicts `sad`. That's the expected failure mode of an untrained softmax — it learns one dominant output and rides it. These numbers exist to anchor the floor; the value of the repo is the *methodology* that surrounds them.
+The **42-point drop** from RAVDESS to CREMA-D is the whole point of the exercise. A model that looks solid on its training corpus — 74% on held-out RAVDESS actors, which is already harder than the 85%+ numbers most public notebooks report on random splits — falls apart on a different corpus with different actors, sentences, and recording conditions. CREMA-D accuracy is only ~7 points above the 25% chance floor. The trained head found something RAVDESS-specific (mic, sentence structure, intensity distribution) rather than a corpus-invariant representation of emotion.
+
+This is the number recruiters should see on a resume. Not "I got 90% on RAVDESS" — *everyone* got 90% on RAVDESS. The value is reporting the drop honestly and having the pipeline to measure it.
 
 ![RAVDESS confusion](results/ravdess_confusion.png)
 ![CREMA-D confusion](results/crema_d_confusion.png)
 
-Full breakdown (per-class precision and recall) is in [`results/metrics.json`](results/metrics.json). Regenerate at any time with `python -m src.evaluate`.
+Regenerate anytime with `python -m src.train && python -m src.evaluate`.
 
 ## Roadmap
 
-- [ ] Fine-tune classifier head on the RAVDESS train split (frozen encoder)
-- [ ] Compare frozen-encoder vs. full fine-tuning
-- [ ] Report the cross-corpus accuracy drop with a trained model
+- [x] Fine-tune classifier head on the RAVDESS train split (frozen encoder)
+- [x] Report the cross-corpus accuracy drop with a trained model
+- [ ] Full fine-tune (unfreeze transformer) — expected to push RAVDESS into the 80s
 - [ ] Add SpecAugment and waveform-level augmentation (noise, pitch, time-stretch)
+- [ ] Domain-adversarial training to close the RAVDESS → CREMA-D gap
 - [ ] Extend to multilingual SER via XLSR-53
 - [ ] Add a calibration plot — SER models are usually overconfident OOD
 
@@ -83,14 +86,17 @@ python -m data.download --sample
 # Build the manifest (splits, label mapping)
 python -m data.prepare
 
-# Zero-shot eval — writes results/ PNGs and metrics.json
+# Fine-tune the head — ~5 min on Apple Silicon MPS, saves checkpoints/best.pt
+python -m src.train --epochs 10
+
+# Eval — auto-loads checkpoints/best.pt if present, writes metrics + PNGs
 python -m src.evaluate
 
 # Launch the Gradio demo
 python -m app.demo
 ```
 
-Everything above runs on CPU. Training will need a GPU.
+Inference and the Gradio demo run on CPU. Training uses MPS on Apple Silicon or CUDA if available; the `--unfreeze-encoder` flag trades ~10x longer training for a few points of accuracy.
 
 ## Limitations
 
@@ -99,7 +105,7 @@ Everything above runs on CPU. Training will need a GPU.
 - English-only. The encoder is trained on English (LibriSpeech). XLSR is in the roadmap.
 - No noise robustness. Clean studio recordings only. No channel, compression, or background-noise augmentation yet.
 - Fixed 4-second windows. Long utterances are truncated, short ones padded with silence — which the encoder can over-weight.
-- Untrained head. Current numbers are zero-shot. Treat them as the floor, not the ceiling.
+- Head-only fine-tune. Only the projector + classifier are trained; the Wav2Vec2 transformer is frozen. Unfreezing it (`--unfreeze-encoder`) should close some of the cross-corpus gap.
 
 ## References
 

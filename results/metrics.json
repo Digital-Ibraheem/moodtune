@@ -1,40 +1,40 @@
 {
-  "model_state": "untrained_classifier_head",
+  "model_state": "trained_head_only",
   "splits": {
     "ravdess_test": {
       "split": "test",
       "n": 144,
-      "accuracy": 0.2986111111111111,
-      "macro_f1": 0.19388548653640517,
+      "accuracy": 0.7430555555555556,
+      "macro_f1": 0.7114317337438242,
       "per_class_precision": {
-        "neutral": 0.0,
-        "happy": 0.0,
-        "sad": 0.22448979591836735,
-        "angry": 0.3368421052631579
+        "neutral": 0.7358490566037735,
+        "happy": 0.6666666666666666,
+        "sad": 1.0,
+        "angry": 0.7619047619047619
       },
       "per_class_recall": {
-        "neutral": 0.0,
-        "happy": 0.0,
-        "sad": 0.34375,
+        "neutral": 0.8125,
+        "happy": 0.8125,
+        "sad": 0.3125,
         "angry": 1.0
       }
     },
     "crema_d_ood": {
       "split": "ood",
       "n": 4900,
-      "accuracy": 0.26285714285714284,
-      "macro_f1": 0.11031038116963549,
+      "accuracy": 0.3206122448979592,
+      "macro_f1": 0.2342542452951197,
       "per_class_precision": {
-        "neutral": 0.0,
-        "happy": 0.0,
-        "sad": 0.8947368421052632,
-        "angry": 0.26173805601317957
+        "neutral": 0.16954022988505746,
+        "happy": 0.33868974042027195,
+        "sad": 0.4530386740331492,
+        "angry": 0.3245367770915216
       },
       "per_class_recall": {
-        "neutral": 0.0,
-        "happy": 0.0,
-        "sad": 0.013375295043273014,
-        "angry": 1.0
+        "neutral": 0.05427782888684453,
+        "happy": 0.2155782848151062,
+        "sad": 0.06451612903225806,
+        "angry": 0.9095200629425649
       }
     }
   }
