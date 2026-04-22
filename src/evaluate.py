@@ -31,8 +31,10 @@ from src.dataset import EmotionAudioDataset, make_dataloader  # noqa: E402
 from src.model import build_model  # noqa: E402
 
 
-def evaluate_split(model, feature_extractor, manifest, split, device, batch_size=8):
+def evaluate_split(model, feature_extractor, manifest, split, device, batch_size=8, corpus=None, desc_suffix=""):
     subset = manifest[manifest["split"] == split]
+    if corpus is not None:
+        subset = subset[subset["corpus"] == corpus]
     if subset.empty:
         return None
     dataset = EmotionAudioDataset(subset)
@@ -41,8 +43,9 @@ def evaluate_split(model, feature_extractor, manifest, split, device, batch_size
     model.eval()
     all_preds: list[int] = []
     all_labels: list[int] = []
+    desc = f"eval[{corpus or 'all'}:{split}{desc_suffix}]"
     with torch.no_grad():
-        for batch in tqdm(loader, desc=f"eval[{split}]"):
+        for batch in tqdm(loader, desc=desc):
             inputs = batch["input_values"].to(device)
             logits = model(input_values=inputs).logits
             preds = logits.argmax(dim=-1).cpu().tolist()
@@ -137,7 +140,7 @@ def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     metrics: dict = {"model_state": model_state, "splits": {}}
 
-    rav_test = evaluate_split(model, fe, manifest, "test", device)
+    rav_test = evaluate_split(model, fe, manifest, "test", device, corpus="ravdess")
     if rav_test is not None:
         plot_confusion_matrix(
             rav_test["labels"],
@@ -147,20 +150,29 @@ def main() -> None:
             f"RAVDESS test — {model_state}",
         )
         metrics["splits"]["ravdess_test"] = {k: v for k, v in rav_test.items() if k not in {"predictions", "labels"}}
-        print("\n[RAVDESS test]")
+        print("\n[RAVDESS test — 4 held-out speakers]")
         print(_format_table(rav_test))
 
-    crema = evaluate_split(model, fe, manifest, "ood", device)
+    # Accept either the new co-train split (corpus=crema_d, split=test) or the
+    # legacy manifest where CREMA-D was entirely split=ood.
+    crema = evaluate_split(model, fe, manifest, "test", device, corpus="crema_d")
+    if crema is None:
+        crema = evaluate_split(model, fe, manifest, "ood", device, corpus="crema_d")
+        crema_key = "crema_d_ood"
+        crema_title_split = "OOD"
+    else:
+        crema_key = "crema_d_test"
+        crema_title_split = "test (15 held-out speakers)"
     if crema is not None:
         plot_confusion_matrix(
             crema["labels"],
             crema["predictions"],
             LABELS,
             RESULTS_DIR / "crema_d_confusion.png",
-            f"CREMA-D OOD — {model_state}",
+            f"CREMA-D {crema_title_split} — {model_state}",
         )
-        metrics["splits"]["crema_d_ood"] = {k: v for k, v in crema.items() if k not in {"predictions", "labels"}}
-        print("\n[CREMA-D OOD]")
+        metrics["splits"][crema_key] = {k: v for k, v in crema.items() if k not in {"predictions", "labels"}}
+        print(f"\n[CREMA-D {crema_title_split}]")
         print(_format_table(crema))
 
     out = RESULTS_DIR / "metrics.json"

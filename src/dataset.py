@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import librosa
 import numpy as np
 import pandas as pd
 import soundfile as sf
@@ -15,6 +16,26 @@ from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import MAX_SAMPLES, PROCESSED_DIR, SAMPLE_RATE  # noqa: E402
+
+# Trim leading/trailing silence and normalize to a consistent loudness so the
+# model sees the same dynamic range during training and at serve time (mic
+# recordings often have 0.5–1s of silence + varying gain).
+TRIM_TOP_DB = 25
+TARGET_RMS = 0.1
+
+
+def normalize_waveform(wav: np.ndarray) -> np.ndarray:
+    if wav.size == 0:
+        return wav
+    trimmed, _ = librosa.effects.trim(wav, top_db=TRIM_TOP_DB)
+    if trimmed.size < SAMPLE_RATE // 4:  # at least 0.25s left
+        trimmed = wav
+    rms = float(np.sqrt(np.mean(trimmed ** 2))) if trimmed.size else 0.0
+    if rms > 1e-5:
+        trimmed = trimmed * (TARGET_RMS / rms)
+        # clip extreme peaks to avoid hard-limiting artefacts
+        trimmed = np.clip(trimmed, -1.0, 1.0)
+    return trimmed.astype(np.float32)
 
 
 class EmotionAudioDataset(Dataset):
@@ -41,6 +62,8 @@ class EmotionAudioDataset(Dataset):
             data = data.mean(axis=1)
         wav = torch.from_numpy(np.ascontiguousarray(data)).unsqueeze(0)
         wav = self._resample(wav, sr).squeeze(0)
+        wav_np = normalize_waveform(wav.numpy())
+        wav = torch.from_numpy(wav_np)
 
         if wav.shape[0] < MAX_SAMPLES:
             wav = torch.nn.functional.pad(wav, (0, MAX_SAMPLES - wav.shape[0]))

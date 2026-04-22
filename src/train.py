@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--unfreeze-encoder", action="store_true")
     parser.add_argument("--checkpoint", type=Path, default=CHECKPOINT_DIR / "best.pt")
@@ -99,7 +100,7 @@ def main() -> None:
 
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=args.weight_decay)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
     history: list[dict] = []
     best_val_acc = -1.0

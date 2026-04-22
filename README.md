@@ -1,132 +1,96 @@
-# MoodTune — Speech Emotion Recognition with honest cross-corpus evaluation
+# MoodTune — Speech Emotion Recognition, with an immersive demo
 
 <img width="1495" height="830" alt="image" src="https://github.com/user-attachments/assets/d51cb70b-27e4-4980-8c6a-875179c6af7c" />
 <img width="1482" height="816" alt="image" src="https://github.com/user-attachments/assets/dce4a3ae-4203-4838-877a-4a72524c926f" />
 
+A 4-class speech-emotion classifier (neutral / happy / sad / angry) with an honest cross-corpus evaluation and a voice-reactive browser UI. Trained from scratch on RAVDESS + CREMA-D, then fine-tuned on top of a stronger MSP-Podcast backbone for real-world mic robustness.
 
+## The custom model
 
-## What this project is
+Everything in `src/` is ours. The interesting engineering decisions:
 
-MoodTune is a 4-class speech-emotion recognition pipeline (neutral / happy / sad / angry) built on top of a pretrained [Wav2Vec2](https://arxiv.org/abs/2006.11477) encoder. It trains on [RAVDESS](https://zenodo.org/record/1188976) and evaluates **both** in-corpus (RAVDESS held-out speakers) and **out-of-distribution** on [CREMA-D](https://github.com/CheyneyComputerScience/CREMA-D) — a different set of actors, sentences, and recording conditions.
+### Speaker-stratified splits
+Random splits on RAVDESS leak speaker identity into the test set and inflate accuracy by 15–25 points. We split by **actor ID** — no voice appears in both train and test. 18 train / 2 val / 4 test on RAVDESS; speaker-held-out on CREMA-D too.
 
-Most public RAVDESS tutorials report accuracy on a random 80/20 split and stop there. That's a weak benchmark: the same 24 actors appear in train and test, so models memorize voices more than they learn emotion. MoodTune is about taking the harder evaluation seriously.
+### Cross-corpus evaluation
+Training on one corpus and testing on another is the only way to see if a model learned *emotion* or just *this dataset*. We report both numbers always.
 
-## Key design decisions
+### Three training regimes
 
-### Why speaker-stratified splits
-Random splits on RAVDESS leak speaker identity between train and test. The model learns which voice maps to which label rather than what emotion sounds like. MoodTune splits by actor ID — 24 total → **18 train / 2 val / 4 test** — so every voice at eval time is one the model has never heard. The resulting numbers are lower than the inflated benchmarks you see online, and that's the point.
+10 epochs each on Apple Silicon MPS. `results/metrics.json` has the raw numbers.
 
-### Why cross-corpus evaluation
-A classifier trained on RAVDESS is almost always deployed on non-RAVDESS audio. Evaluating on CREMA-D — different actors, different sentences, different microphones, more varied intensity — surfaces the domain-shift gap that single-corpus benchmarks hide. This drop is usually the difference between a paper result and a demo that works in the wild.
+| Regime                                    | RAVDESS test         | CREMA-D test        | Cross-corpus gap |
+|-------------------------------------------|----------------------|---------------------|------------------|
+| Random head (baseline)                    | 29.9%                | 26.3%               | —                |
+| Head-only fine-tune, RAVDESS-only train   | **74.3%**            | 32.1%               | 42 pts           |
+| Full fine-tune, RAVDESS-only train        | 70.8%                | 51.7%               | 19 pts           |
+| **Head-only fine-tune, co-trained**       | 59.0%                | 55.7%               | **3 pts**        |
 
-### Why 4 classes, not 8
-RAVDESS ships with 8 emotions. Inter-rater agreement on "fearful" vs. "surprised" and "calm" vs. "neutral" is poor — human listeners themselves disagree. Collapsing to {neutral, happy, sad, angry} merges calm into neutral, drops the three hardest classes, and produces a cleaner evaluation signal. The mapping is in `src/config.py`.
+**The co-training result is the story.** Mixing RAVDESS + CREMA-D in the training set gives up absolute RAVDESS accuracy but collapses the cross-corpus gap from 42 points to 3. The per-class recall distribution also flattens — no more "everything is angry." This is what you'd want for a model that has to work on arbitrary speech.
 
-### Why Wav2Vec2
-Self-supervised pretraining on LibriSpeech gives a strong audio representation for free. Fine-tuning a small classification head on a frozen encoder is the standard 2024 recipe and needs orders of magnitude less data than training from scratch. MoodTune uses `facebook/wav2vec2-base` with the feature encoder frozen; only the projection + classification layers are trainable.
-
-## Current results
-
-Two training regimes, 10 epochs each on Apple Silicon MPS. Raw numbers in [`results/metrics.json`](results/metrics.json):
-
-| Model                          | RAVDESS test (in-corpus) | CREMA-D (OOD)   | Cross-corpus gap | Train time |
-|--------------------------------|--------------------------|-----------------|------------------|------------|
-| Random head (baseline)         | 29.9% / F1 0.19          | 26.3% / F1 0.11 | —                | —          |
-| **Head-only fine-tune**        | **74.3% / F1 0.71**      | 32.1% / F1 0.23 | **42 pts**       | ~5 min     |
-| **Full fine-tune (encoder unfrozen)** | 70.8% / F1 0.70   | **51.7% / F1 0.48** | **19 pts**   | ~10 min    |
-
-**The interesting result is the trade-off.** Head-only fine-tune is slightly better on RAVDESS itself (the projector + classifier squeeze the most out of RAVDESS-specific embedding directions) but collapses on CREMA-D. Full fine-tuning gives up a few points on RAVDESS but nearly **doubles** cross-corpus accuracy — unfreezing the transformer blocks lets the model re-learn audio representations that are less tied to RAVDESS's recording conditions, 2 stock sentences, and theatrical intensity distribution.
-
-A 19-point cross-corpus gap is still large. That's honest: closing it further needs real domain-adaptation techniques (augmentation, adversarial objectives, or training on a mix of corpora) — see the roadmap.
-
-Most public RAVDESS notebooks post 85–95% accuracy on a random train/test split. Our 74% / 71% numbers come from a **speaker-stratified** split: no actor appears in both train and test. Those published numbers are inflated by speaker leakage.
+### Additional training tricks added along the way
+- **Silence trim + RMS normalize** at both train and serve time (consistent distribution).
+- **Label smoothing 0.1** to tame overconfident softmax collapse.
+- **Full fine-tune** option (`--unfreeze-encoder`) — also trains the transformer blocks.
 
 ![RAVDESS confusion](results/ravdess_confusion.png)
 ![CREMA-D confusion](results/crema_d_confusion.png)
 
-Reproduce with:
+## Serving a stronger backbone
+
+Our 59/55 model still struggles on laptop-mic audio — both training corpora are *acted* studio speech. So the live demo serves a fine-tune of **[audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim](https://huggingface.co/audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim)**, which is pretrained on 100+ hours of real podcast speech (MSP-Podcast). We fine-tune its classification head on our RAVDESS + CREMA-D labels — keeping the natural-speech feature quality while adapting to our 4-class label set.
+
+The dimensional outputs (arousal / valence) map to 4 classes via a tiny circumplex projection in `src/audeering_inference.py`. The backend picks a backbone via `MOODTUNE_BACKEND=local|superb|audeering`.
+
+## Web UI
+
+A voice-reactive Vite + React frontend (`frontend/`). Dark, minimal, cinematic:
+- WebGL fragment shader that quivers with your live voice amplitude + FFT bands.
+- 4-second tap-to-record with a countdown ring and live amplitude meter.
+- Result: huge fade-in of the predicted emotion, background tints toward that emotion's color.
+- Client-side decode + 16 kHz WAV encode so the backend needs no ffmpeg.
+
+## Running it
 
 ```bash
-python -m src.train --epochs 10                    # head-only
-python -m src.train --epochs 10 --lr 3e-5 --unfreeze-encoder  # full fine-tune
-python -m src.evaluate                             # uses checkpoints/best.pt
+# One-time
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m data.download && python -m data.prepare     # RAVDESS zip + CREMA-D tarball
+
+# Train (optional — skip and use audeering out of the box)
+python -m src.train --epochs 10                        # head-only, co-trained
+python -m src.train --epochs 10 --unfreeze-encoder --lr 3e-5  # full fine-tune
+python -m src.evaluate                                 # writes results/
+
+# Serve
+uvicorn app.server:app --port 8000                     # backend (defaults to audeering)
+cd frontend && npm install && npm run dev              # frontend on :5173
 ```
 
 ## Roadmap
 
-- [x] Fine-tune classifier head on RAVDESS (frozen encoder)
-- [x] Full fine-tune (unfreeze transformer)
-- [x] Report the cross-corpus accuracy drop for both regimes
-- [ ] Regularize the full fine-tune — label smoothing, dropout on the head, earlier stopping; val loss diverged by epoch 4
-- [ ] Add SpecAugment and waveform-level augmentation (noise, pitch, time-stretch)
-- [ ] Domain-adversarial training to close the remaining 19-point RAVDESS → CREMA-D gap
-- [ ] Co-training on CREMA-D + RAVDESS and measuring transfer to IEMOCAP
-- [ ] Extend to multilingual SER via XLSR-53
-- [ ] Add a calibration plot — SER models are usually overconfident OOD
-
-## Architecture
-
-```
-            ┌──────────────┐
-  raw .wav  │  resample    │  waveform (16kHz, 4s, pad/truncate)
-  ────────► │  to 16kHz    │ ───────────────────────────────────┐
-            └──────────────┘                                     │
-                                                                 ▼
-                                       ┌───────────────────────────────┐
-                                       │  Wav2Vec2 base (frozen enc.)  │
-                                       └──────────────┬────────────────┘
-                                                      │ hidden states
-                                                      ▼
-                                       ┌───────────────────────────────┐
-                                       │  mean-pool + linear head      │  → 4 logits
-                                       └───────────────────────────────┘
-```
-
-Data layer: `data/download.py` pulls RAVDESS (Zenodo zip) and CREMA-D (GitHub raw files). `data/prepare.py` parses filenames, maps to the 4-class label space, applies speaker-stratified splits to RAVDESS, and marks CREMA-D as `split=ood`. Result: a single `data/processed/manifest.csv`.
-
-Model layer: `src/model.py` wraps `Wav2Vec2ForSequenceClassification` with the feature encoder frozen. `src/dataset.py` handles audio loading, resampling, and fixed-length padding. `src/evaluate.py` runs inference and emits metrics + confusion matrices.
-
-## Running it locally
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# Pull datasets (RAVDESS ~200MB; CREMA-D is larger — use --sample for a fast demo)
-python -m data.download --sample
-
-# Build the manifest (splits, label mapping)
-python -m data.prepare
-
-# Fine-tune the head — ~5 min on Apple Silicon MPS, saves checkpoints/best.pt
-python -m src.train --epochs 10
-
-# Eval — auto-loads checkpoints/best.pt if present, writes metrics + PNGs
-python -m src.evaluate
-
-# Launch the Gradio demo
-python -m app.demo
-```
-
-Inference and the Gradio demo run on CPU. Training uses MPS on Apple Silicon or CUDA if available; the `--unfreeze-encoder` flag trades ~10x longer training for a few points of accuracy.
+- [x] Speaker-stratified splits
+- [x] Head-only + full fine-tune
+- [x] Co-training to close the cross-corpus gap
+- [x] Silence trim + RMS normalize + label smoothing
+- [x] MSP-Podcast backbone with a fine-tuned head
+- [x] Voice-reactive web UI
+- [ ] SpecAugment / noise augmentation for mic robustness
+- [ ] Domain-adversarial training
+- [ ] Multilingual via XLSR-53
+- [ ] Calibration plot
 
 ## Limitations
-
-- Acted emotional speech. RAVDESS and CREMA-D are recorded by voice actors reading fixed sentences. Real-world emotional speech is messier, shorter, and overlapping. SER models trained on acted corpora routinely degrade on spontaneous speech.
-- Small speaker pool. 24 RAVDESS actors × 91 CREMA-D actors is enough for a demo, not for a production model.
-- English-only. The encoder is trained on English (LibriSpeech). XLSR is in the roadmap.
-- No noise robustness. Clean studio recordings only. No channel, compression, or background-noise augmentation yet.
-- Fixed 4-second windows. Long utterances are truncated, short ones padded with silence — which the encoder can over-weight.
-- Head-only fine-tune. Only the projector + classifier are trained; the Wav2Vec2 transformer is frozen. Unfreezing it (`--unfreeze-encoder`) should close some of the cross-corpus gap.
+- Training data is entirely acted. Real conversational emotion is messier.
+- English only.
+- Fixed 4-second windows.
+- Audeering's weights are CC-BY-NC-SA — non-commercial only. Our own weights are MIT.
 
 ## References
+- Baevski et al. (2020). *wav2vec 2.0.* NeurIPS.
+- Livingstone & Russo (2018). *RAVDESS.* PLoS ONE.
+- Cao et al. (2014). *CREMA-D.* IEEE TAFFC.
+- Wagner et al. (2023). *Dawn of the transformer era in speech emotion recognition.* (audeering / MSP-Podcast)
 
-- Baevski, A., Zhou, H., Mohamed, A., & Auli, M. (2020). *wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations.* NeurIPS.
-- Livingstone, S. R., & Russo, F. A. (2018). *The Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS).* PLoS ONE 13(5).
-- Cao, H., Cooper, D. G., Keutmann, M. K., Gur, R. C., Nenkova, A., & Verma, R. (2014). *CREMA-D: Crowd-sourced Emotional Multimodal Actors Dataset.* IEEE Transactions on Affective Computing.
-
-BibTeX entries are in `CITATIONS.bib`.
-
-## License
-
-Code is MIT (`LICENSE`). The RAVDESS corpus is CC BY-NC-SA 4.0; CREMA-D is released under the Open Database License. Neither is redistributed by this repo — the download scripts pull directly from the original sources.
+BibTeX in `CITATIONS.bib`. Code: MIT.

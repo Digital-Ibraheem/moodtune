@@ -12,3 +12,6 @@ tqdm>=4.66,<5.0
 soundfile>=0.12,<0.13
 librosa>=0.10,<0.11
 huggingface_hub>=0.22,<0.26
+fastapi>=0.110,<0.120
+uvicorn>=0.27,<0.35
+python-multipart>=0.0.9,<0.1

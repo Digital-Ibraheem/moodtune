@@ -147,8 +147,13 @@ def main() -> None:
 
     crema = build_crema_d_manifest(RAW_DIR / "crema_d")
     if not crema.empty:
-        crema = crema.copy()
-        crema["split"] = "ood"
+        # Speaker-stratified split inside CREMA-D so we can co-train AND still
+        # measure held-out cross-corpus performance. 15 speakers are test,
+        # 5 val, the rest train. Split labels follow the same vocabulary as
+        # RAVDESS ({train, val, test}) so the DataLoaders don't need special
+        # casing. A separate "crema_test" column marks which corpus a test
+        # sample came from — evaluate.py uses this for the split report.
+        crema = speaker_stratified_split(crema, val_speakers=5, test_speakers=15)
     else:
         print("[warn] no CREMA-D audio found under data/raw/crema_d/")
 
